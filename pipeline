@@ -1,0 +1,114 @@
+cd /home/zhaohuiyao/Database/NT
+#使用Aspera下载（尝试）
+/home/zhaohuiyao/.aspera/connect/bin/ascp -v -QT -l 400m -k1 –i /home/zhaohuiyao/.aspera/connect/etc/asperaweb_id_dsa.openssh anonftp@ftp.ncbi.nlm.nih.gov:/blast/db/nt.00.tar.gz  ./
+#报错信息，可能是服务器或者网络受限的问题
+ascp: no remote host specified
+Startup failed, exit
+#使用wget下载，速度3MB/s（尝试）
+wget https://ftp.ncbi.nlm.nih.gov/blast/db/nt.00.tar.gz
+
+mkdir /home/zhaohuiyao/Database/NT/nt	#存放解压后的文件
+#共00~74个nt文件，编辑download_nt.sh，全部下载
+#!/bin/bash
+echo "download nt start on `date`"
+cd /home/zhaohuiyao/Database/NT/
+for i in {00..74}
+do
+	wget https://ftp.ncbi.nlm.nih.gov/blast/db/nt.${i}.tar.gz ./
+	wget https://ftp.ncbi.nlm.nih.gov/blast/db/nt.${i}.tar.gz.md5 ./
+	md5sum -c ./nt.${i}.tar.gz.md5
+	tar -zxvf ./nt.${i}.tar.gz -C ./nt/
+	echo "nt.${i} has done."
+done
+echo "download nt end on `date`"
+
+nohup /bin/bash ./download_nt.sh &
+#查看目录/home/zhaohuiyao/Database/NT/nt下内容，下载完成
+#查看文件nohup.out，查看是否所有都完成。grep "has done" ./nohup.out
+nt.00 has done.
+nt.01 has done.
+nt.02 has done.
+...
+nt.74 has done.
+
+#若觉得占空间，可以将下载nt.XX.tar.gz和nt.XX.tar.gz.md5进行删除
+rm nt.XX.tar.gz
+rm nt.XX.tar.gz.md5
+#-------------------------------------------------------------------------------------------------------
+cd /home/zhaohuiyao/Genome_survey/nt
+#这是常见的二代双端数据，两个fastq文件。每一个文件随机提取5000条。
+nohup python3 Extract_sequence.py -i /XXX/raw_data/XXX_L1_1.fq -I /XXX/raw_data/XXX_L1_2.fq -o ./ -out_name XXX -f fq -n 10000 &
+#最后拿到结果文件XXX_10000.fa
+#参数-i：文件1；参数-I：文件2；参数-o：输出目录；参数-out_name：输出文件名；参数-f：fq/fa。默认是fq；参数-n：提取的序列个数
+
+
+#如果你是PacBio的HiFi测序数据，公司会给你bam/fasta/fastq格式的数据文件。这里仅针对fastq/fasta文件，提取5000条序列
+nohup python3 Extract_sequence.py -i /XXX/raw_data/XXX_L1_1.fq -o ./ -out_name XXX -f f -n 5000 &
+#-------------------------------------------------------------------------------------------------------
+#全NT库已经是构建好的，直接进行blast
+cd /home/zhaohuiyao/Genome_survey/nt/
+nohup blastn -num_threads 32 -max_target_seqs 10 -evalue 1e-05 -db /home/zhaohuiyao/Database/NT/nt/nt -outfmt "7 qseqid sseqid evalue pident ppos length mismatch gapopen qstart qend sstart send bitscore staxid sscinames stitle" -query ./XXX_10000.fa -out ./XXX_10000.blastn.out &
+
+#具体的参数含义，自行查阅即可
+#可能会遇到这样的报错：BLAST Database error: Error: Not a valid version 4 database。原因可能是blast版本低，使用高版本的blast
+#报警告，不影响blast结果，只是因为没有物种信息，无法用staxid获取sscinames信息
+Warning: [blastn] Taxonomy name lookup from taxid requires installation of taxdb database with ftp://ftp.ncbi.nlm .nih.gov/blast/db/taxdb.tar.gz
+#更新命令
+cd /home/zhaohuiyao/Database/NT/
+wget http://ftp.ncbi.nlm.nih.gov/blast/db/taxdb.tar.gz
+tar -zxvf ./taxdb.tar.gz -C ./nt/
+#更新后没有用，因此这里我整理一下staxid、scinames的信息，最后补充到blast结果中。如果你没有这类问题，则忽略
+#我的blast结果（缺失scinames的信息，显示为N/A）
+# BLASTN 2.10.1+
+# Query: A00808:1021:H5HHFDSX3:3:2478:32217:24627 1:N:0:GACCAAGCTT+AGTGGAGTCA
+# Database: /home/zhaohuiyao/Database/NT/nt/nt
+# Fields: query id, subject id, evalue, % identity, % positives, alignment length, mismatches, gap opens, q. start, q. end, s. start, s. end, bit score, subject tax id, subject sci name, subject title
+# 46 hits found
+A00808:1021:H5HHFDSX3:3:2478:32217:24627	gi|2268683873|emb|OX155639.1|	2.56e-54	93.421	93.42	152	8	2	1	150	15472611      15472762	224	218720	N/A	Carterocephalus palaemon genome assembly, chromosome: 2
+#-------------------------------------------------------------------------------------------------------
+#下载最新的taxdmp.zip（2022-09-28）
+mkdir -p /home/zhaohuiyao/Database/taxdmp/ && cd /home/zhaohuiyao/Database/taxdmp/
+wget https://ftp.ncbi.nih.gov/pub/taxonomy/taxdmp.zip
+wget https://ftp.ncbi.nih.gov/pub/taxonomy/taxdmp.zip.md5
+md5sum -c ./taxdmp.zip.md5
+unzip ./taxdmp.zip
+#解压后的文件中names.dmp，是我们需要的staxid-scinames关系文件
+#执行脚本staxid-scinames.py，拿到两者关系文件staxid-scinames.txt，第一列：staxid；第二列：scinames
+python3 ./staxid-scinames.py -i ./names.dmp -o ./
+
+#staxid的scinames关系文件目录
+/home/zhaohuiyao/Database/taxdmp/staxid-scinames.txt
+#-------------------------------------------------------------------------------------------------------
+#对blast结果补充scinames信息，并进行总结分类
+python3 blastn_stat.py -i ./XXX_10000.blastn.out -f /home/zhaohuiyao/Database/taxdmp/staxid-scinames.txt -o ./XXX_10000.blastn.out.stat -num 10000
+
+#结果文件如下，cat XXX_10000.blastn.out.stat
+Species_name	mapping_reads	total_reads	ratio
+unknown	9265	10000	92.65%
+Wolbachia pipientis	207	10000	2.07%
+Wolbachia endosymbiont of Ostrinia scapulalis	99	10000	0.99%
+Wolbachia endosymbiont of Chrysomya megacephala	92	10000	0.92%
+Opisthograptis luteolata	91	10000	0.91%
+Wolbachia endosymbiont of Ostrinia furnacalis	90	10000	0.90%
+Wolbachia endosymbiont of Corcyra cephalonica	76	10000	0.76%
+Wolbachia pipientis wAlbB	76	10000	0.76%
+Wolbachia endosymbiont of Drosophila mauritiana	75	10000	0.75%
+Wolbachia endosymbiont of Diaphorina citri	73	10000	0.73%
+#取blast前10的物种输出。第一列：物种名；第二列：比对到该物种的reads数；第三列：总参与比对reads数；第四列：占比
+#为什么unknown这么多，这是二代数据太短了，150bp，造成的
+
+#这是一个PacBio的Hifi测序数据的NT库比对结果
+Species_name	mapping_reads	total_reads	ratio
+unknown	1506	5000	30.12%
+Glyphotaelius pellucidus	204	5000	4.08%
+Spodoptera littoralis	195	5000	3.90%
+Zeuzera pyrina	183	5000	3.66%
+Hypsopygia costalis	171	5000	3.42%
+Calamotropha paludella	169	5000	3.38%
+Cerceris rybyensis	168	5000	3.36%
+Mellicta athalia	166	5000	3.32%
+Phosphuga atrata	155	5000	3.10%
+Schistocerca gregaria	150	5000	3.00%
+
+
+
